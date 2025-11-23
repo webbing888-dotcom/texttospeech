@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini TTS Converter</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        /* Custom scrollbar for textarea */
+        textarea::-webkit-scrollbar {
+            width: 8px;
+        }
+        textarea::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div id="app" class="w-full max-w-xl bg-white shadow-2xl rounded-xl p-6 md:p-8 border border-gray-100">
+        
+        <h1 class="text-3xl font-extrabold text-gray-900 mb-2 text-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="inline-block w-8 h-8 text-indigo-600 mr-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5"/><path d="M12 19c-1.333-1-3-2-5-2S3 16 3 14V6h18v8c0 2-1.667 3-3 4s-3.667 2-5 2z"/></svg>
+            Text-to-Speech Generator
+        </h1>
+        <p class="text-center text-gray-500 mb-6">Convert any text using the Gemini TTS model and download the audio.</p>
+
+        <div class="space-y-4">
+            <!-- Text Input -->
+            <div>
+                <label for="text-input" class="block text-sm font-medium text-gray-700 mb-2">Enter Text</label>
+                <textarea id="text-input" rows="6" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 resize-none" placeholder="Type or paste the text you want to convert to speech..."></textarea>
+            </div>
+
+            <!-- Voice Selection (Optional, set to default in payload) -->
+            <div>
+                <label for="voice-select" class="block text-sm font-medium text-gray-700 mb-2">Select Voice</label>
+                <select id="voice-select" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 appearance-none bg-white">
+                    <option value="Kore" selected>Kore (Firm)</option>
+                    <option value="Puck">Puck (Upbeat)</option>
+                    <option value="Zephyr">Zephyr (Bright)</option>
+                    <option value="Charon">Charon (Informative)</option>
+                    <option value="Fenrir">Fenrir (Excitable)</option>
+                </select>
+            </div>
+
+            <!-- Controls and Status -->
+            <div class="flex flex-col space-y-3 pt-2">
+                <button id="convert-button" class="w-full flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 transition duration-300 ease-in-out shadow-md disabled:opacity-50">
+                    <span id="button-text">Convert & Play Audio</span>
+                    <span id="loading-spinner" class="hidden animate-spin h-5 w-5 border-4 border-white border-t-transparent rounded-full ml-3"></span>
+                </button>
+
+                <button id="download-button" class="w-full flex items-center justify-center px-6 py-3 border border-indigo-600 text-base font-medium rounded-lg text-indigo-600 bg-white hover:bg-indigo-50 transition duration-300 ease-in-out shadow-sm disabled:opacity-50" disabled>
+                    Download .WAV File
+                </button>
+            </div>
+
+            <!-- Audio Player -->
+            <div id="audio-player-container" class="hidden pt-4">
+                <p class="text-sm font-medium text-gray-700 mb-2">Playback:</p>
+                <audio id="audio-player" controls class="w-full rounded-lg shadow-inner bg-gray-100"></audio>
+            </div>
+            
+            <!-- Error Message Box -->
+            <div id="message-box" class="hidden p-3 rounded-lg bg-red-100 text-red-700 text-sm font-medium"></div>
+
+        </div>
+    </div>
+
+    <script type="module">
+        // Global variables for Firebase setup (required by environment, even if not used for core logic)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- DOM Elements ---
+        const textInput = document.getElementById('text-input');
+        const voiceSelect = document.getElementById('voice-select');
+        const convertButton = document.getElementById('convert-button');
+        const downloadButton = document.getElementById('download-button');
+        const audioPlayer = document.getElementById('audio-player');
+        const audioContainer = document.getElementById('audio-player-container');
+        const messageBox = document.getElementById('message-box');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const buttonText = document.getElementById('button-text');
+
+        // --- Utility Functions for Audio Conversion ---
+
+        // Converts Base64 string to ArrayBuffer
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // Creates a WAV Blob from raw PCM 16-bit audio data
+        function pcmToWav(pcm16, sampleRate) {
+            // PCM16 is Int16Array (signed 16-bit)
+            const numChannels = 1;
+            const bytesPerSample = 2; // 16-bit
+            const dataLength = pcm16.length * bytesPerSample;
+            const buffer = new ArrayBuffer(44 + dataLength);
+            const view = new DataView(buffer);
+            let offset = 0;
+
+            function writeString(view, offset, string) {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            }
+
+            // RIFF chunk
+            writeString(view, offset, 'RIFF'); offset += 4;
+            view.setUint32(offset, 36 + dataLength, true); offset += 4; // File length
+            writeString(view, offset, 'WAVE'); offset += 4;
+
+            // fmt chunk
+            writeString(view, offset, 'fmt '); offset += 4;
+            view.setUint32(offset, 16, true); offset += 4; // Chunk length
+            view.setUint16(offset, 1, true); offset += 2; // Sample format (1: linear PCM)
+            view.setUint16(offset, numChannels, true); offset += 2; // Number of channels
+            view.setUint32(offset, sampleRate, true); offset += 4; // Sample rate
+            view.setUint32(offset, sampleRate * numChannels * bytesPerSample, true); offset += 4; // Byte rate
+            view.setUint16(offset, numChannels * bytesPerSample, true); offset += 2; // Block align
+            view.setUint16(offset, bytesPerSample * 8, true); offset += 2; // Bits per sample
+
+            // data chunk
+            writeString(view, offset, 'data'); offset += 4;
+            view.setUint32(offset, dataLength, true); offset += 4; // Data chunk length
+
+            // Write the PCM data
+            for (let i = 0; i < pcm16.length; i++) {
+                view.setInt16(offset + i * bytesPerSample, pcm16[i], true);
+            }
+
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+
+        // --- API Call and Core Logic ---
+
+        let audioUrl = null; // Store the current audio URL for playback/download
+
+        function showMessage(text, isError = false) {
+            messageBox.textContent = text;
+            messageBox.className = `p-3 rounded-lg text-sm font-medium ${isError ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`;
+            messageBox.style.display = 'block';
+        }
+
+        function hideMessage() {
+            messageBox.style.display = 'none';
+        }
+
+        function setLoading(isLoading) {
+            convertButton.disabled = isLoading || textInput.value.trim().length === 0;
+            downloadButton.disabled = isLoading || !audioUrl;
+            loadingSpinner.classList.toggle('hidden', !isLoading);
+            buttonText.textContent = isLoading ? 'Generating Speech...' : 'Convert & Play Audio';
+            
+            // Disable other interactions while loading
+            textInput.disabled = isLoading;
+            voiceSelect.disabled = isLoading;
+        }
+
+        async function fetchTTS(text, voiceName, maxRetries = 5) {
+            const model = "gemini-2.5-flash-preview-tts";
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: [{
+                    parts: [{ text: text }]
+                }],
+                generationConfig: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: {
+                        voiceConfig: {
+                            prebuiltVoiceConfig: { voiceName: voiceName }
+                        }
+                    }
+                },
+                model: model
+            };
+
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorBody = await response.json();
+                        throw new Error(`API returned status ${response.status}: ${errorBody.error?.message || 'Unknown error'}`);
+                    }
+
+                    const result = await response.json();
+                    const part = result?.candidates?.[0]?.content?.parts?.[0];
+                    const audioData = part?.inlineData?.data;
+                    const mimeType = part?.inlineData?.mimeType;
+
+                    if (!audioData || !mimeType || !mimeType.startsWith("audio/L16")) {
+                        throw new Error("Invalid or missing audio data in API response.");
+                    }
+
+                    // Extract sample rate from mimeType, e.g., "audio/L16; rate=24000"
+                    const rateMatch = mimeType.match(/rate=(\d+)/);
+                    const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+                    
+                    // Convert base64 to ArrayBuffer
+                    const pcmDataBuffer = base64ToArrayBuffer(audioData);
+                    
+                    // The API returns signed PCM16 audio data.
+                    const pcm16 = new Int16Array(pcmDataBuffer);
+                    
+                    // Convert PCM to WAV Blob
+                    const wavBlob = pcmToWav(pcm16, sampleRate);
+                    
+                    return wavBlob;
+
+                } catch (error) {
+                    if (attempt < maxRetries - 1) {
+                        const delay = Math.pow(2, attempt) * 1000; // Exponential backoff
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        console.warn(`Attempt ${attempt + 1} failed. Retrying in ${delay}ms...`, error);
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+            throw new Error("Failed to fetch TTS data after multiple retries.");
+        }
+
+
+        async function handleTTS(isDownload) {
+            const text = textInput.value.trim();
+            const voice = voiceSelect.value;
+
+            if (!text) {
+                showMessage("Please enter some text to convert.", true);
+                return;
+            }
+
+            hideMessage();
+            setLoading(true);
+            
+            // Clean up previous URL object if it exists
+            if (audioUrl) {
+                URL.revokeObjectURL(audioUrl);
+                audioUrl = null;
+            }
+            audioContainer.classList.add('hidden');
+            downloadButton.disabled = true;
+
+            try {
+                const wavBlob = await fetchTTS(text, voice);
+                
+                // Create a URL for the Blob
+                const newAudioUrl = URL.createObjectURL(wavBlob);
+                audioUrl = newAudioUrl;
+
+                if (isDownload) {
+                    // Handle Download
+                    const a = document.createElement('a');
+                    a.href = newAudioUrl;
+                    a.download = `gemini-speech-${Date.now()}.wav`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    showMessage("WAV file download initiated!", false);
+                } else {
+                    // Handle Playback
+                    audioPlayer.src = newAudioUrl;
+                    audioPlayer.play();
+                    audioContainer.classList.remove('hidden');
+                    showMessage("Speech generated and is playing.", false);
+                }
+                
+                downloadButton.disabled = false; // Enable download button after successful generation
+
+            } catch (error) {
+                console.error("TTS Error:", error);
+                showMessage(`Failed to generate speech: ${error.message}`, true);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // --- Event Listeners & Initialization ---
+
+        // Check if the text input is empty to control button state
+        textInput.addEventListener('input', () => {
+            const hasText = textInput.value.trim().length > 0;
+            convertButton.disabled = !hasText;
+            hideMessage(); // Clear message on new input
+        });
+
+        // Attach event listeners for the buttons to fix the ReferenceError
+        convertButton.addEventListener('click', () => handleTTS(false));
+        downloadButton.addEventListener('click', () => handleTTS(true));
+
+        // Initial state check
+        window.onload = () => {
+            if (textInput.value.trim().length === 0) {
+                convertButton.disabled = true;
+            }
+        };
+
+    </script>
+</body>
+</html>
