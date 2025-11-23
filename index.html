@@ -48,6 +48,8 @@
                     <option value="Zephyr">Zephyr (Bright)</option>
                     <option value="Charon">Charon (Informative)</option>
                     <option value="Fenrir">Fenrir (Excitable)</option>
+                    <option value="Leda">Leda (Youthful)</option>
+                    <option value="Orus">Orus (Firm)</option>
                 </select>
             </div>
 
@@ -76,7 +78,7 @@
     </div>
 
     <script type="module">
-        // Global variables for Firebase setup (required by environment, even if not used for core logic)
+        // Global variables for environment setup
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
@@ -176,8 +178,9 @@
 
         async function fetchTTS(text, voiceName, maxRetries = 5) {
             const model = "gemini-2.5-flash-preview-tts";
-            const apiKey = "AIzaSyC7wZAf8m6WBMYy2XQTKmPXlp4fBlTSpao";
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${AIzaSyC7wZAf8m6WBMYy2XQTKmPXlp4fBlTSpao}`;
+            // NOTE: apiKey is set to "" so the Canvas environment can inject the key
+            const apiKey = "";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
             const payload = {
                 contents: [{
@@ -213,12 +216,13 @@
                     const mimeType = part?.inlineData?.mimeType;
 
                     if (!audioData || !mimeType || !mimeType.startsWith("audio/L16")) {
-                        throw new Error("Invalid or missing audio data in API response.");
+                        throw new Error("Invalid or missing audio data in API response. Expected 'audio/L16'.");
                     }
 
                     // Extract sample rate from mimeType, e.g., "audio/L16; rate=24000"
                     const rateMatch = mimeType.match(/rate=(\d+)/);
-                    const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000;
+                    // Default to 24000 Hz if rate isn't explicitly found
+                    const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 24000; 
                     
                     // Convert base64 to ArrayBuffer
                     const pcmDataBuffer = base64ToArrayBuffer(audioData);
@@ -280,7 +284,7 @@
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
-                    showMessage("WAV file download initiated!", false);
+                    showMessage("WAV file download initiated! Check your downloads folder.", false);
                 } else {
                     // Handle Playback
                     audioPlayer.src = newAudioUrl;
@@ -308,7 +312,7 @@
             hideMessage(); // Clear message on new input
         });
 
-        // Attach event listeners for the buttons to fix the ReferenceError
+        // Attach event listeners for the buttons
         convertButton.addEventListener('click', () => handleTTS(false));
         downloadButton.addEventListener('click', () => handleTTS(true));
 
